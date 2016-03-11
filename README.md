@@ -4,13 +4,13 @@
 
 ### Overview
 
-ECS ID Mapper is a tool for tracking the relationship between an ECS task ID and a Docker container ID. The tool
+ECS ID Mapper is a tool for tracking the relationship between an [ECS](https://aws.amazon.com/ecs/) task ID and a Docker container ID. The tool
 also records relevant information about a docker container which can be useful for other tools to query. It has two  
 components, an agent that runs on the EC2 host in the ECS cluster and a server.
 
 
 ### Server Methods
-The server has a basic REST interface that behaves as follows:
+The server has a basic REST interface that behaves as follows (`GET` HTTP method only):
 
 
 `/query/container_id/<container_id>`
@@ -57,3 +57,4 @@ containers can be run behind a load balancer for increased availability and thro
 * [AWS EC2 Container Service](https://aws.amazon.com/ecs/)
 * python 2.7 and [python requests](http://docs.python-requests.org/en/master/) (for the agent)
 
+Special thanks to Dmitriy Bannikov for his help with this tool.
