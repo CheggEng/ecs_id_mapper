@@ -49,7 +49,8 @@ def report_map():
                                             container_id=container_attributes['container_id'][:12])
         except KeyError as e:
             logging.error('Unable to find keys in response: {}'.format(e))
-        db.put(k, container_attributes, 'ecs_id_mapper_hash')
+        _map[k] = container_attributes
+    db.batch_put(_map, 'ecs_id_mapper_hash')
     return 'true'
 
 
@@ -87,6 +88,7 @@ def get_all_container_attributes_by_container_id(container_id):
     if len(json_results) == 0:
         abort(404)
     return jsonify(json_results)
+
 
 
 @ecs_id_mapper.route('/query/container_id/<container_id>/cadvisor', methods=['GET'])
