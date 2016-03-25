@@ -6,6 +6,7 @@ import copy
 from os import path
 import json
 from socket import gethostname
+import subprocess
 
 
 class ECSIDMapAgent():
@@ -41,6 +42,18 @@ class ECSIDMapAgent():
             logging.info('unable to get instance metadata for {}'.format(path))
             pass
 
+    @staticmethod
+    def get_container_ports(container_id):
+        cmd = ["/usr/bin/docker", "port", container_id[:12]]
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        output, errors = p.communicate()
+        if errors or len(output) < 1:
+            return "0", "0"
+        cport, hport = output.split("-")
+        cport = cport.split('/')[0]
+        hport = hport.split(':')[1].strip()
+        return cport, hport
+
     def get_ecs_agent_tasks(self):
         while True:
             try:
@@ -63,6 +76,10 @@ class ECSIDMapAgent():
             instance_type = self.get_instance_metadata('instance-type')
             for container in task['Containers']:
                 docker_id = str(container['DockerId'])
+                if desired_status == "RUNNING":
+                    container_port, instance_port = self.get_container_ports(docker_id)
+                else:
+                    container_port, instance_port = "0", "0"
                 container_name = str(container['Name'])
                 pkey = hashlib.sha256()
                 pkey.update(docker_id)
@@ -70,9 +87,11 @@ class ECSIDMapAgent():
                 pkey.update(desired_status)
                 id_map[pkey.hexdigest()] = {'container_id': docker_id,
                                             'container_name': container_name,
+                                            'container_port': container_port,
                                             'task_id': task_id,
                                             'task_name': task_name,
                                             'task_version': task_version,
+                                            'instance_port': instance_port,
                                             'instance_ip': instance_ip,
                                             'instance_id': instance_id,
                                             'instance_type': instance_type,
