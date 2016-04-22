@@ -1,18 +1,28 @@
 import boto.sdb
 from boto.exception import SDBResponseError
-import secrets
 from itertools import islice
+import settings
 
-aws_id = secrets.get('guardian_aws_id')
-aws_secret_key = secrets.get('guardian_aws_secret_key')
-aws_region = secrets.get('aws_region')
-conn = boto.sdb.connect_to_region(aws_region, aws_access_key_id=aws_id, aws_secret_access_key=aws_secret_key)
+conn = boto.sdb.connect_to_region(settings.simpledb_aws_region,
+                                  aws_access_key_id=settings.aws_id,
+                                  aws_secret_access_key=settings.aws_secret_key)
 
 # maintain state of existing domain objects
 domains = {}
 
 
-def batch_items(items, increment=25):
+def _check_for_domain(domain):
+    try:
+        conn.get_domain(domain)
+        return True
+    except SDBResponseError as e:
+        if str(e.error_code) == 'NoSuchDomain':
+            return False
+        else:
+            raise
+
+
+def _batch_items(items, increment=25):
     start = 0
     end = increment
     incr = increment
@@ -29,7 +39,7 @@ def batch_items(items, increment=25):
             break
 
 
-def put(key, value, domain):
+def put(key, value, domain, replace=False):
     try:
         dom = domains[domain]
     except KeyError:
@@ -41,7 +51,7 @@ def put(key, value, domain):
         # store domain obj for later use
         domains[domain] = dom
     # put k,v
-    return dom.put_attributes(key, value)
+    return dom.put_attributes(key, value, replace=replace)
 
 
 def batch_put(items, domain):
@@ -55,7 +65,7 @@ def batch_put(items, domain):
             dom = conn.get_domain(domain)
         # store domain obj for later use
         domains[domain] = dom
-    for items in batch_items(items):
+    for items in _batch_items(items):
         r = dom.batch_put_attributes(items)
     return True
 
@@ -95,3 +105,8 @@ def search_domain(query, domain):
 
 def list_domains():
     return conn.get_all_domains()
+
+
+def create_domain(domain):
+    return conn.create_domain(domain)
+

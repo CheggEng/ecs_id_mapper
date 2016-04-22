@@ -4,13 +4,13 @@
 
 ### Overview
 
-ECS ID Mapper is a tool for tracking the relationship between an [ECS](https://aws.amazon.com/ecs/) task ID and a Docker container ID. The tool
+ECS ID Mapper is a tool for tracking the relationship between an ECS task ID and a Docker container ID. The tool
 also records relevant information about a docker container which can be useful for other tools to query. It has two  
 components, an agent that runs on the EC2 host in the ECS cluster and a server.
 
 
 ### Server Methods
-The server has a basic REST interface that behaves as follows (`GET` HTTP method only):
+The server has a basic REST interface that behaves as follows:
 
 
 `/query/container_id/<container_id>`
@@ -20,7 +20,7 @@ Get the corresponding task id for a given container id. Returns a text string if
 Get all known attributes of a container based on container id. Returns JSON if found, 404 if not found.
 
 `/query/container_id/<container_id>/cadvisor`
-Get the cadvisor URL for a given container by container_id. Append `?redir=true` to get a 302 redirect to the cAdvisor URL. 
+Get the cadvisor URL for a given container by container_id. Append `?redir=true` to vault_get a 302 redirect to the cAdvisor URL. 
 
 `/query/task_id/<task_id>`
 Get the corresponding container id for a given task id. Returns a text string if found, 404 if not found.
@@ -28,8 +28,22 @@ Get the corresponding container id for a given task id. Returns a text string if
 `/query/container_id/<task_id>/_all`
 Get all known attributes of a container based on task id. Returns JSON if found, 404 if not found.
 
-`/query/container_id/<task_id>/cadvisor`
-Get the cadvisor URL for a given container by task_id. Append `?redir=true` to get a 302 redirect to the cAdvisor URL. 
+`/query/task_id/<task_id>/cadvisor`
+Get the cadvisor URL for a given container by task_id. Append `?redir=true` to vault_get a 302 redirect to the URL. 
+
+`/query/task_id/<task_id>/graylog`
+Get the graylog URL for a given container by task_id. Append `?redir=true` to vault_get a 302 redirect to the URL. 
+
+`/query/task_id/<task_id>/newrelic`
+Get the new relic URL for the application instance of the corresponding new relic application. 
+Append `?redir=true` to vault_get a 302 redirect to the URL. 
+
+`/query/service/<cluster_name>/<service_name>/newrelic`
+Get the new relic URL for the application represented by the ECS service. 
+Append `?redir=true` to vault_get a 302 redirect to the URL. 
+
+`/query/service/<cluster_name>/<service_name>/_all`
+Get attributes for all tasks in a serivce.
 
 `/health`
 Internal health check of the server, returns 200 if the server is healthy. 
@@ -57,4 +71,3 @@ containers can be run behind a load balancer for increased availability and thro
 * [AWS EC2 Container Service](https://aws.amazon.com/ecs/)
 * python 2.7 and [python requests](http://docs.python-requests.org/en/master/) (for the agent)
 
-Special thanks to Dmitriy Bannikov for his help with this tool.

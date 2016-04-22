@@ -10,37 +10,71 @@ import subprocess
 
 
 class ECSIDMapAgent():
-    def __init__(self, server_endpoint):
+    def __init__(self, server_endpoint, log_level):
         self.id_map = {}
         self.new_id_map = {}
         self.server_endpoint = server_endpoint
-        self.logging = logging.getLogger(__name__)
+        self.logger = self._setup_logger(log_level)
+        self.logger.info('Starting agent')
         self.backoff_time = 2
         self.current_backoff_time = self.backoff_time
         self.current_retry = 0
         self.max_retries = 2
         self.hostname = gethostname()
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+        self.instance_ip = self.get_instance_metadata('local-ipv4')  # set these at object constr. as they don't change
+        self.instance_id = self.get_instance_metadata('instance-id')
+        self.instance_type = self.get_instance_metadata('instance-type')
+        self.instance_az = self.get_instance_metadata('placement/availability-zone')
 
-    def retry(self):
-        self.logging.debug(self.current_backoff_time,  self.current_retry, self.max_retries)
-        if self.current_retry > self.max_retries:
-            self.logging.info('Max retry reached. Aborting')
+    @staticmethod
+    def _setup_logger(log_level):
+        logger = logging.getLogger('ecs_id_mapper_agent')
+        logger.setLevel(log_level)
+        logger.propagate = False
+        stderr_logs = logging.StreamHandler()
+        stderr_logs.setLevel(getattr(logging, log_level))
+        stderr_logs.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        logger.addHandler(stderr_logs)
+        return logger
+
+    def _retry(self):
+        self.logger.debug('backoff: {} retry: {} max_retry {}'.format(self.current_backoff_time,
+                                                                      self.current_retry, self.max_retries))
+        if self.current_retry >= self.max_retries:
+            self.logger.info('Max _retry reached. Aborting')
             self.current_retry = 0
             self.current_backoff_time = self.backoff_time
             return False
         else:
             self.current_retry += 1
+            self.logger.info('Sleeping for {} seconds'.format(str(self.current_backoff_time)))
             time.sleep(self.current_backoff_time)
-            self.current_backoff_time = self.current_backoff_time ** 2
+            self.current_backoff_time **= 2
             return True
 
+    def _http_connect(self, url, timeout=1):
+        self.logger.debug('Making connection to: {}'.format(url))
+        while True:
+            try:
+                r = requests.get(url, timeout=timeout)
+                return r
+            except requests.exceptions.ConnectionError:
+                self.logger.error('Connection error accessing URL {}'.format(str(url)))
+                if not self._retry():
+                    return None
+            except requests.exceptions.Timeout:
+                self.logger.error(
+                    'Connection timeout accessing URL {}. Current timeout value {}'.format(url, str(timeout)))
+                if not self._retry():
+                    return None
+
     def get_instance_metadata(self, path):
-        try:
-            return str(requests.get('http://169.254.169.254/latest/meta-data/{}'.format(path)).text)
-        except requests.exceptions.ConnectionError:
-            logging.info('unable to get instance metadata for {}'.format(path))
-            pass
+        self.logger.info('Checking instance metadata')
+        metadata = self._http_connect('http://169.254.169.254/latest/meta-data/{}'.format(path))
+        if metadata:
+            return metadata.text
+        else:
+            return ""
 
     @staticmethod
     def get_container_ports(container_id):
@@ -55,25 +89,25 @@ class ECSIDMapAgent():
         return cport, hport
 
     def get_ecs_agent_tasks(self):
-        while True:
-            try:
-                self.logging.info('Requesting task data from ECS agent')
-                r = requests.get('http://127.0.0.1:51678/v1/tasks').json()
-                break
-            except requests.exceptions.ConnectionError:
-                self.logging.info('Unable to connect to ECS agent. Sleeping for {} seconds'.format(str(self.current_backoff_time)))
-                if not self.retry():
-                    break
+        ecs_agent_tasks_response = self._http_connect('http://127.0.0.1:51678/v1/tasks')
+        ecs_agent_metadata_response = self._http_connect('http://127.0.0.1:51678/v1/metadata')
+
+        if ecs_agent_tasks_response and ecs_agent_metadata_response:
+            ecs_agent_tasks = ecs_agent_tasks_response.json()
+            ecs_agent_metadata = ecs_agent_metadata_response.json()
+        else:
+            ecs_agent_tasks = None
+            ecs_agent_metadata = None
+            return False
         id_map = {}
-        for task in r['Tasks']:
+        cluster_name = ecs_agent_metadata['Cluster']
+        ecs_agent_version = ecs_agent_metadata['Version']
+        for task in ecs_agent_tasks['Tasks']:
             task_id = str(task['Arn'].split(":")[-1][5:])
             desired_status = str(task['DesiredStatus'])
             known_status = str(task['KnownStatus'])
             task_name = str(task['Family'])
             task_version = str(task['Version'])
-            instance_ip = self.get_instance_metadata('local-ipv4')
-            instance_id = self.get_instance_metadata('instance-id')
-            instance_type = self.get_instance_metadata('instance-type')
             for container in task['Containers']:
                 docker_id = str(container['DockerId'])
                 if desired_status == "RUNNING":
@@ -92,70 +126,77 @@ class ECSIDMapAgent():
                                             'task_name': task_name,
                                             'task_version': task_version,
                                             'instance_port': instance_port,
-                                            'instance_ip': instance_ip,
-                                            'instance_id': instance_id,
-                                            'instance_type': instance_type,
+                                            'instance_ip': self.instance_ip,
+                                            'instance_id': self.instance_id,
+                                            'instance_type': self.instance_type,
+                                            'instance_az': self.instance_az,
                                             'desired_status': desired_status,
                                             'known_status': known_status,
                                             'host_name': self.hostname,
+                                            'cluster_name': cluster_name,
+                                            'ecs_agent_version': ecs_agent_version,
                                             'sample_time': time.time()}
+        # Update internal state
         self.new_id_map = copy.deepcopy(id_map)
 
     def report_event(self, event_id, action):
         for id in event_id:
-            self.logging.info('Reporting new container event. Action {}. Event id: {}'.format(action, id))
+            self.logger.info('Reporting new container event. Action {}. Event id: {}'.format(action, id))
             headers = {'Content-type': 'application/json', 'Accept': 'text/plain'}
             while True:
                 try:
                     r = requests.post(path.join(self.server_endpoint, 'report/event'),
                                       headers=headers,
                                       data=json.dumps({'event_id': id, 'event': action, 'timestamp': time.time()}))
-                    self.logging.debug(r.text)
+                    self.logger.debug(r.text)
                     break
                 except requests.exceptions.ConnectionError:
-                    self.logging.info('Unable to connect to server endpoint. Sleeping for {} seconds'.format(
-                    str(self.current_backoff_time)))
-                    if not self.retry():
+                    self.logger.info('Unable to connect to server endpoint. Sleeping for {} seconds'.format(
+                        str(self.current_backoff_time)))
+                    if not self._retry():
                         break
 
     def report_map(self):
-        self.logging.info('Reporting current id map')
+        self.logger.info('Reporting current id map')
         headers = {'Content-type': 'application/json', 'Accept': 'text/plain'}
         while True:
             try:
                 r = requests.post(path.join(self.server_endpoint, 'report/map'),
                                   headers=headers, data=json.dumps(self.id_map))
-                self.logging.debug(r.text)
+                self.logger.debug(r.text)
                 break
             except requests.exceptions.ConnectionError:
-                self.logging.info('Unable to connect to server endpoint. Sleeping for {} seconds'.format(str(self.current_backoff_time)))
-                if not self.retry():
+                self.logger.info('Unable to connect to server endpoint. Sleeping for {} seconds'.format(
+                    str(self.current_backoff_time)))
+                if not self._retry():
                     break
 
     def compare_hash(self):
-        self.logging.info('Comparing known state to current state')
+        self.logger.info('Comparing known state to current state')
         containers_added = set(self.new_id_map.keys()) - set(self.id_map.keys())
         containers_removed = set(self.id_map.keys()) - set(self.new_id_map.keys())
         if len(containers_added) > 0:
-            self.logging.info('Containers added {}'.format(containers_added))
+            self.logger.info('Containers added {}'.format(containers_added))
             self.report_event(containers_added, 'added')
         if len(containers_removed) > 0:
-            self.logging.info('Containers removed {}'.format(containers_removed))
+            self.logger.info('Containers removed {}'.format(containers_removed))
             self.report_event(containers_removed, 'removed')
         if len(containers_removed) > 0 or len(containers_added) > 0:
             self.id_map = copy.deepcopy(self.new_id_map)
             self.report_map()
         else:
-            self.logging.info('No container actions to report')
+            self.logger.info('No container actions to report')
 
 
 if __name__ == '__main__':
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--server_endpoint', required=True)
     parser.add_argument('--sleep_interval', required=False, default=20, type=int)
+    parser.add_argument('--log_level', required=False, default='INFO', type=str)
     args = parser.parse_args()
-    agent = ECSIDMapAgent(args.server_endpoint)
+    agent = ECSIDMapAgent(args.server_endpoint, args.log_level)
 
     # Reduce verbosity of requests logging
     logging.getLogger("requests").setLevel(logging.WARNING)
