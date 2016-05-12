@@ -60,7 +60,7 @@ The server stores information about containers it receives in [AWS SDB](https://
 some processing to generate URLs for monitoring tools for each container it gets reports of.
 
 The server provides REST APIs to users who want to query information in the database.
- 
+
 The server runs in a Docker container. Each container is essentially stateless so multiple
 containers can be run behind a load balancer for increased availability and throughput.
 

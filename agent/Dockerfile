@@ -1,7 +1,11 @@
-FROM ubuntu:14.04
-RUN apt-get -y install python-setuptools
-RUN easy_install pip
-RUN pip install requests==2.9.1
+FROM alpine:3.3
+RUN apk add --update python
+RUN apk add --update --virtual build-dependencies \
+    python-dev \
+    py-pip \
+    && pip install requests==2.9.1 \
+    && pip install docker-py==1.8.0 \
+    && apk del build-dependencies
 ADD . /src/
 ENV sleep_interval 20
 ENV log_level INFO

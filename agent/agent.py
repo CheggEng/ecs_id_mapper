@@ -7,6 +7,7 @@ from os import path
 import json
 from socket import gethostname
 import subprocess
+from docker import Client
 
 
 class ECSIDMapAgent():
@@ -15,7 +16,6 @@ class ECSIDMapAgent():
         self.new_id_map = {}
         self.server_endpoint = server_endpoint
         self.logger = self._setup_logger(log_level)
-        self.logger.info('Starting agent')
         self.backoff_time = 2
         self.current_backoff_time = self.backoff_time
         self.current_retry = 0
@@ -25,11 +25,12 @@ class ECSIDMapAgent():
         self.instance_id = self.get_instance_metadata('instance-id')
         self.instance_type = self.get_instance_metadata('instance-type')
         self.instance_az = self.get_instance_metadata('placement/availability-zone')
+        self.docker_client = Client(base_url='unix://var/run/docker.sock', version='1.21')
 
     @staticmethod
     def _setup_logger(log_level):
         logger = logging.getLogger('ecs_id_mapper_agent')
-        logger.setLevel(log_level)
+        logger.setLevel(log_level.upper())
         logger.propagate = False
         stderr_logs = logging.StreamHandler()
         stderr_logs.setLevel(getattr(logging, log_level))
@@ -69,7 +70,7 @@ class ECSIDMapAgent():
                     return None
 
     def get_instance_metadata(self, path):
-        self.logger.info('Checking instance metadata')
+        self.logger.info('Checking instance metadata for {}'.format(path))
         metadata = self._http_connect('http://169.254.169.254/latest/meta-data/{}'.format(path))
         if metadata:
             return metadata.text
@@ -78,17 +79,21 @@ class ECSIDMapAgent():
 
     @staticmethod
     def get_container_ports(container_id):
-        cmd = ["/usr/bin/docker", "port", container_id[:12]]
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        output, errors = p.communicate()
-        if errors or len(output) < 1:
+        try:
+            cmd = ["/usr/bin/docker", "port", container_id[:12]]
+            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            output, errors = p.communicate()
+            if errors or len(output) < 1:
+                return "0", "0"
+            cport, hport = output.split("-")
+            cport = cport.split('/')[0]
+            hport = hport.split(':')[1].strip()
+            return cport, hport
+        except (OSError, ValueError):
             return "0", "0"
-        cport, hport = output.split("-")
-        cport = cport.split('/')[0]
-        hport = hport.split(':')[1].strip()
-        return cport, hport
 
     def get_ecs_agent_tasks(self):
+        self.logger.info('Requesting data from ECS agent')
         ecs_agent_tasks_response = self._http_connect('http://127.0.0.1:51678/v1/tasks')
         ecs_agent_metadata_response = self._http_connect('http://127.0.0.1:51678/v1/metadata')
 
@@ -148,7 +153,7 @@ class ECSIDMapAgent():
                     r = requests.post(path.join(self.server_endpoint, 'report/event'),
                                       headers=headers,
                                       data=json.dumps({'event_id': id, 'event': action, 'timestamp': time.time()}))
-                    self.logger.debug(r.text)
+                    self.logger.debug("HTTP response: " + str(r.status_code))
                     break
                 except requests.exceptions.ConnectionError:
                     self.logger.info('Unable to connect to server endpoint. Sleeping for {} seconds'.format(
@@ -163,7 +168,7 @@ class ECSIDMapAgent():
             try:
                 r = requests.post(path.join(self.server_endpoint, 'report/map'),
                                   headers=headers, data=json.dumps(self.id_map))
-                self.logger.debug(r.text)
+                self.logger.debug("HTTP response: " + str(r.status_code))
                 break
             except requests.exceptions.ConnectionError:
                 self.logger.info('Unable to connect to server endpoint. Sleeping for {} seconds'.format(
@@ -187,13 +192,24 @@ class ECSIDMapAgent():
         else:
             self.logger.info('No container actions to report')
 
+    def run(self):
+        """
+        Blocking method to run agent
+        :return:
+        """
+        self.logger.info('Starting agent')
+        for event in self.docker_client.events(decode=True):
+            self.logger.debug(str(event))
+            if event['status'] == 'start' or event['status'] == 'die':
+                agent.get_ecs_agent_tasks()
+                agent.compare_hash()
+
 
 if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--server_endpoint', required=True)
-    parser.add_argument('--sleep_interval', required=False, default=20, type=int)
     parser.add_argument('--log_level', required=False, default='INFO', type=str)
     args = parser.parse_args()
     agent = ECSIDMapAgent(args.server_endpoint, args.log_level)
@@ -202,7 +218,5 @@ if __name__ == '__main__':
     logging.getLogger("requests").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-    while True:
-        agent.get_ecs_agent_tasks()
-        agent.compare_hash()
-        time.sleep(args.sleep_interval)
+    # Start the agent
+    agent.run()
