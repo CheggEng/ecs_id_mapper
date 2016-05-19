@@ -8,4 +8,4 @@ RUN apk add --update --virtual build-dependencies \
     && apk del build-dependencies
 ADD . /src/
 ENV log_level INFO
-CMD python /src/agent.py --server_endpoint $endpoint --log_level $log_level
+CMD ["python", "/src/agent.py"]

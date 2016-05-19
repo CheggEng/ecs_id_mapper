@@ -3,9 +3,10 @@ import logging
 import time
 import hashlib
 import copy
-from os import path
+from os import path, getenv
 import json
 from socket import gethostname
+from sys import exit
 import subprocess
 from docker import Client
 
@@ -206,13 +207,14 @@ class ECSIDMapAgent():
 
 
 if __name__ == '__main__':
-    import argparse
+    server_endpoint = getenv('endpoint', None)
+    log_level = getenv('log_level', 'INFO')
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--server_endpoint', required=True)
-    parser.add_argument('--log_level', required=False, default='INFO', type=str)
-    args = parser.parse_args()
-    agent = ECSIDMapAgent(args.server_endpoint, args.log_level)
+    if not server_endpoint:
+        print "Error: you must specify server endpoint as EVAR 'endpoint'"
+        exit(1)
+
+    agent = ECSIDMapAgent(server_endpoint, log_level)
 
     # Reduce verbosity of requests logging
     logging.getLogger("requests").setLevel(logging.WARNING)
