@@ -1,9 +1,5 @@
 FROM ubuntu:14.04
-RUN apt-get update
-RUN apt-get -y install python-setuptools build-essential
-RUN apt-get -y install python-dev
-RUN apt-get -y install libffi-dev
-RUN apt-get -y install libssl-dev
+RUN apt-get update && apt-get -y install python-setuptools build-essential python-dev libffi-dev libssl-dev
 RUN easy_install pip
 RUN pip install urllib3[secure]==1.15.1
 RUN pip install Flask==0.10.1
@@ -14,4 +10,4 @@ RUN pip install requests==2.9.1
 RUN pip install boto3==1.3.0
 EXPOSE 5001
 ADD . /src/
-CMD cd /src/ && python run_server.py
+CMD ["python", "/src/run_server.py"]

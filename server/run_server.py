@@ -17,6 +17,9 @@ logger.addHandler(stderr_logs)
 logging.getLogger("requests").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
+# Format tornado's logs
+logging.getLogger('tornado').addHandler(stderr_logs)
+
 logger.info('Starting server on port {}'.format(str(settings.server_port)))
 http_server = HTTPServer(WSGIContainer(ecs_id_mapper))
 http_server.listen(settings.server_port)

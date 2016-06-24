@@ -2,6 +2,9 @@ from os import getenv
 import hvac
 import logging
 
+vault_client = {}
+logger = logging.getLogger('ecs_id_mapper')
+
 vault_host = getenv('vault_host')
 vault_token = getenv('vault_token')
 vault_key_aws_id = getenv('vault_key_aws_id')
@@ -22,13 +25,14 @@ new_relic_app_instance_url = "https://rpm.newrelic.com/accounts/{account_id}/app
                              "{application_id}_i{application_instance_id}"
 
 
-# Fetch Secrets: setup client interface to Vault
-logger = logging.getLogger(__name__)
-logger.info("Making connection to vault host: {}".format(vault_host))
-client = hvac.Client(url=vault_host, token=vault_token)
-
-
 def vault_get(name):
+    try:
+        client = vault_client['client']
+    except KeyError:
+        print("Making connection to vault host: {}".format(vault_host))
+        vault_client['client'] = hvac.Client(url=vault_host, token=vault_token)
+        client = vault_client['client']
+
     result = client.read('secret/{}'.format(name))
     if result is None:
         raise Exception('Unable to find secret {}'.format(name))
